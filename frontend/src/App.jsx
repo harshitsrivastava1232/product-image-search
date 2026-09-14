@@ -7,6 +7,7 @@ function App() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [preview, setPreview] = useState(null);
   const [results, setResults] = useState([]);
+  const [category, setCategory] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -18,6 +19,15 @@ function App() {
     setSelectedImage(file);
     setPreview(URL.createObjectURL(file));
     setResults([]);
+    setCategory("");
+    setError("");
+  };
+
+  const clearSearch = () => {
+    setSelectedImage(null);
+    setPreview(null);
+    setResults([]);
+    setCategory("");
     setError("");
   };
 
@@ -26,7 +36,6 @@ function App() {
 
     setLoading(true);
     setError("");
-    setResults([]);
 
     const formData = new FormData();
     formData.append("image", selectedImage);
@@ -44,10 +53,9 @@ function App() {
       }
 
       setResults(data.results || []);
+      setCategory(data.category || "");
     } catch {
-      setError(
-        "Search failed. Make sure the Flask backend is running."
-      );
+      setError("Search failed. Make sure the Flask backend is running.");
     } finally {
       setLoading(false);
     }
@@ -56,8 +64,8 @@ function App() {
   return (
     <div className="app">
       <div className="container">
-        <div className="hero">
-          <p className="badge">AI PRODUCT SEARCH</p>
+        <header className="hero">
+          <div className="badge">AI PRODUCT SEARCH</div>
 
           <h1>
             Find Products
@@ -65,31 +73,46 @@ function App() {
           </h1>
 
           <p className="subtitle">
-            Upload a product image and discover visually similar products.
+            Upload any product image and discover visually similar products
+            using AI-powered image matching.
           </p>
-        </div>
+        </header>
 
-        <div className="upload-card">
+        <section className="upload-card">
           <div className="upload-box">
             {preview ? (
-              <img
-                src={preview}
-                alt="Selected product"
-                className="preview-image"
-              />
+              <>
+                <div className="preview-wrapper">
+                  <img
+                    src={preview}
+                    alt="Selected product"
+                    className="preview-image"
+                  />
+                  <button
+                    className="remove-button"
+                    onClick={clearSearch}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <p className="selected-label">
+                  Image selected successfully
+                </p>
+              </>
             ) : (
               <>
                 <div className="upload-icon">↑</div>
 
                 <h2>Upload Product Image</h2>
 
-                <p>PNG, JPG or JPEG</p>
+                <p>JPG, JPEG or PNG</p>
               </>
             )}
 
             <label className="upload-button">
               {preview ? "Choose Another Image" : "Choose Image"}
-
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/jpg"
@@ -104,39 +127,75 @@ function App() {
             onClick={searchProducts}
           >
             {loading
-              ? "🔄 Finding Similar Products..."
+              ? "🔄 Analyzing Image..."
               : "🔍 Search Similar Products"}
           </button>
 
           {error && <p className="error-message">{error}</p>}
-        </div>
+        </section>
 
-        <div className="results">
-          <h2>Similar Products</h2>
+        <section className="results">
+          <div className="results-header">
+            <div>
+              <p className="section-label">SEARCH RESULTS</p>
+              <h2>Similar Products</h2>
+            </div>
 
-          {results.length === 0 && !loading && (
-            <p className="empty-text">
-              Upload an image to see matching products here.
-            </p>
+            {category && (
+              <div className="category-badge">
+                {category}
+              </div>
+            )}
+          </div>
+
+          {loading && (
+            <div className="loading-box">
+              <div className="spinner"></div>
+              <p>Finding the closest visual matches...</p>
+            </div>
           )}
 
-          <div className="results-grid">
-            {results.map((product) => (
-              <div className="product-card" key={product.image}>
-                <img
-                  src={`${BACKEND_URL}${product.image}`}
-                  alt={product.name}
-                />
+          {!loading && results.length === 0 && !error && (
+            <div className="empty-state">
+              <div className="empty-icon">✦</div>
+              <h3>No results yet</h3>
+              <p>Upload a product image to start your AI search.</p>
+            </div>
+          )}
 
-                <div className="product-info">
-                  <h3>{product.name}</h3>
+          {!loading && results.length > 0 && (
+            <div className="results-grid">
+              {results.map((product) => (
+                <div className="product-card" key={product.image}>
+                  <div className="product-image-wrap">
+                    <img
+                      src={`${BACKEND_URL}${product.image}`}
+                      alt={product.name}
+                    />
+                  </div>
 
-                  <p>{product.similarity}% similarity</p>
+                  <div className="product-info">
+                    <h3>{product.name.replaceAll("_", " ")}</h3>
+
+                    <div className="score-row">
+                      <span>Similarity</span>
+                      <strong>{product.similarity}%</strong>
+                    </div>
+
+                    <div className="score-track">
+                      <div
+                        className="score-fill"
+                        style={{
+                          width: `${Math.min(product.similarity, 100)}%`,
+                        }}
+                      ></div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );
