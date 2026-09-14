@@ -1,8 +1,9 @@
 import { useState } from "react";
 import "./App.css";
 
-const BACKEND_URL = "https://product-image-search.onrender.com";
-
+const BACKEND_URL = import.meta.env.DEV
+  ? "http://127.0.0.1:5000"
+  : "https://product-image-search.onrender.com";
 function App() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [preview, setPreview] = useState(null);
