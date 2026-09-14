@@ -31,6 +31,7 @@ input {
 .hero {
   text-align: center;
   margin-bottom: 38px;
+  
 }
 
 .badge {
@@ -51,6 +52,7 @@ input {
   letter-spacing: -2px;
   font-weight: 850;
   margin-bottom: 18px;
+  color: #111827 !important;
 }
 
 .hero h1 span {

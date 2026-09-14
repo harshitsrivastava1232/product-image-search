@@ -20,7 +20,10 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(DATASET_FOLDER, exist_ok=True)
 
 
-# MobileNetV2 feature extractor
+# --------------------------------------------------
+# AI MODEL
+# --------------------------------------------------
+
 base_model = MobileNetV2(
     weights="imagenet",
     include_top=False,
@@ -33,7 +36,10 @@ feature_model = Model(
 )
 
 
-# Dataset category is determined from filename.
+# --------------------------------------------------
+# PRODUCT CATEGORIES
+# --------------------------------------------------
+
 CATEGORY_MAP = {
     "shoe": "shoes",
     "shoes": "shoes",
@@ -78,7 +84,12 @@ def get_category(filename):
     return None
 
 
+# --------------------------------------------------
+# IMAGE FEATURE EXTRACTION
+# --------------------------------------------------
+
 def extract_features(image_path):
+
     img = Image.open(image_path).convert("RGB")
     img = img.resize((224, 224))
 
@@ -103,8 +114,32 @@ def cosine_similarity(a, b):
     return float(np.dot(a, b))
 
 
-def build_category_prototypes():
+# --------------------------------------------------
+# DATASET CACHE
+# --------------------------------------------------
+
+DATASET_CACHE = []
+CATEGORY_PROTOTYPES = {}
+
+
+def load_dataset_cache():
+
+    global DATASET_CACHE
+    global CATEGORY_PROTOTYPES
+
+    if DATASET_CACHE:
+        return
+
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp"
+    }
+
     category_vectors = {}
+
+    print("Loading dataset features...")
 
     for filename in os.listdir(DATASET_FOLDER):
 
@@ -116,52 +151,90 @@ def build_category_prototypes():
         if not os.path.isfile(file_path):
             continue
 
+        extension = os.path.splitext(
+            filename
+        )[1].lower()
+
+        if extension not in allowed_extensions:
+            continue
+
         category = get_category(filename)
 
         if not category:
             continue
 
         try:
-            vector = extract_features(file_path)
+
+            vector = extract_features(
+                file_path
+            )
+
+            item = {
+                "name": os.path.splitext(filename)[0],
+                "image": f"/dataset/{filename}",
+                "category": category,
+                "features": vector
+            }
+
+            DATASET_CACHE.append(item)
 
             if category not in category_vectors:
                 category_vectors[category] = []
 
-            category_vectors[category].append(vector)
+            category_vectors[category].append(
+                vector
+            )
 
-        except Exception:
-            continue
+        except Exception as error:
+            print(
+                f"Skipping {filename}: {error}"
+            )
 
-    prototypes = {}
-
+    # Create one prototype vector for each category
     for category, vectors in category_vectors.items():
 
-        mean_vector = np.mean(
+        prototype = np.mean(
             vectors,
             axis=0
         )
 
-        norm = np.linalg.norm(mean_vector)
+        norm = np.linalg.norm(prototype)
 
         if norm != 0:
-            mean_vector = mean_vector / norm
+            prototype = prototype / norm
 
-        prototypes[category] = mean_vector
+        CATEGORY_PROTOTYPES[category] = prototype
 
-    return prototypes
+    print(
+        f"Dataset loaded: {len(DATASET_CACHE)} images"
+    )
 
+    print(
+        f"Categories loaded: {list(CATEGORY_PROTOTYPES.keys())}"
+    )
+
+
+# --------------------------------------------------
+# HOME
+# --------------------------------------------------
 
 @app.route("/")
 def home():
+
     return {
         "message": "Product Image Search AI Backend is running"
     }
 
 
+# --------------------------------------------------
+# SEARCH
+# --------------------------------------------------
+
 @app.route("/search", methods=["POST"])
 def search_products():
 
     if "image" not in request.files:
+
         return jsonify({
             "error": "No image uploaded"
         }), 400
@@ -169,6 +242,7 @@ def search_products():
     uploaded_file = request.files["image"]
 
     if uploaded_file.filename == "":
+
         return jsonify({
             "error": "No image selected"
         }), 400
@@ -178,26 +252,33 @@ def search_products():
         uploaded_file.filename
     )
 
-    uploaded_file.save(upload_path)
+    uploaded_file.save(
+        upload_path
+    )
 
     try:
+
+        # Load dataset only once
+        load_dataset_cache()
+
+        if not DATASET_CACHE:
+
+            return jsonify({
+                "error": "Dataset is empty"
+            }), 400
+
         # Extract uploaded image features
         query_features = extract_features(
             upload_path
         )
 
-        # Build category prototypes
-        prototypes = build_category_prototypes()
+        # ------------------------------------------
+        # Detect closest category
+        # ------------------------------------------
 
-        if not prototypes:
-            return jsonify({
-                "error": "Dataset is empty"
-            }), 400
-
-        # Find the closest category
         category_scores = []
 
-        for category, prototype in prototypes.items():
+        for category, prototype in CATEGORY_PROTOTYPES.items():
 
             score = cosine_similarity(
                 query_features,
@@ -210,61 +291,32 @@ def search_products():
             })
 
         category_scores.sort(
-            key=lambda x: x["score"],
+            key=lambda item: item["score"],
             reverse=True
         )
 
         selected_category = category_scores[0]["category"]
 
+        # ------------------------------------------
+        # Compare ONLY selected category
+        # ------------------------------------------
+
         results = []
 
-        allowed_extensions = {
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".webp"
-        }
+        for item in DATASET_CACHE:
 
-        # Search ONLY inside selected category
-        for filename in os.listdir(DATASET_FOLDER):
-
-            file_path = os.path.join(
-                DATASET_FOLDER,
-                filename
-            )
-
-            if not os.path.isfile(file_path):
+            if item["category"] != selected_category:
                 continue
-
-            extension = os.path.splitext(
-                filename
-            )[1].lower()
-
-            if extension not in allowed_extensions:
-                continue
-
-            product_category = get_category(
-                filename
-            )
-
-            if product_category != selected_category:
-                continue
-
-            product_features = extract_features(
-                file_path
-            )
 
             similarity = cosine_similarity(
                 query_features,
-                product_features
+                item["features"]
             )
 
             results.append({
-                "name": os.path.splitext(
-                    filename
-                )[0],
-                "image": f"/dataset/{filename}",
-                "category": product_category,
+                "name": item["name"],
+                "image": item["image"],
+                "category": item["category"],
                 "similarity": round(
                     similarity * 100,
                     2
@@ -272,7 +324,7 @@ def search_products():
             })
 
         results.sort(
-            key=lambda x: x["similarity"],
+            key=lambda item: item["similarity"],
             reverse=True
         )
 
@@ -283,21 +335,38 @@ def search_products():
 
     except Exception as error:
 
+        print("Search error:", error)
+
         return jsonify({
             "error": str(error)
         }), 500
 
 
+# --------------------------------------------------
+# DATASET IMAGES
+# --------------------------------------------------
+
 @app.route("/dataset/<path:filename>")
 def dataset_file(filename):
+
     return send_from_directory(
         DATASET_FOLDER,
         filename
     )
 
 
+# --------------------------------------------------
+# START SERVER
+# --------------------------------------------------
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            5000
+        )
+    )
 
     app.run(
         host="0.0.0.0",
