@@ -47,6 +47,24 @@ CATEGORY_MAP = {
     "headphones": "headphones",
 
     "phone": "phones",
+    "smartphone": "phones",
+
+    "laptop": "laptops",
+    "notebook": "laptops",
+
+    "sunglasses": "sunglasses",
+    "glasses": "sunglasses",
+
+    "bottle": "bottles",
+    "water_bottle": "bottles",
+
+    "hat": "hats",
+    "cap": "hats",
+
+    "earphone": "earphones",
+    "earphones": "earphones",
+    "earbud": "earphones",
+    "earbuds": "earphones",
 }
 
 
