@@ -4,7 +4,19 @@ from PIL import Image
 import numpy as np
 import os
 
-USE_TENSORFLOW = os.environ.get("USE_TENSORFLOW", "true").lower() == "true"
+
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
+
+USE_TENSORFLOW = (
+    os.environ.get("USE_TENSORFLOW", "true").lower() == "true"
+)
+
+
+# --------------------------------------------------
+# OPTIONAL AI MODEL
+# --------------------------------------------------
 
 if USE_TENSORFLOW:
     from tensorflow.keras.applications import MobileNetV2
@@ -13,8 +25,17 @@ if USE_TENSORFLOW:
     from tensorflow.keras.models import Model
 
 
+# --------------------------------------------------
+# FLASK APP
+# --------------------------------------------------
+
 app = Flask(__name__)
 CORS(app)
+
+
+# --------------------------------------------------
+# FOLDERS
+# --------------------------------------------------
 
 UPLOAD_FOLDER = "uploads"
 DATASET_FOLDER = "dataset"
@@ -30,6 +51,7 @@ os.makedirs(DATASET_FOLDER, exist_ok=True)
 feature_model = None
 
 if USE_TENSORFLOW:
+
     base_model = MobileNetV2(
         weights="imagenet",
         include_top=False,
@@ -41,6 +63,7 @@ if USE_TENSORFLOW:
         outputs=base_model.output
     )
 
+
 # --------------------------------------------------
 # PRODUCT CATEGORIES
 # --------------------------------------------------
@@ -51,23 +74,30 @@ CATEGORY_MAP = {
 
     "bag": "bags",
     "backpack": "bags",
+    "purse": "bags",
 
     "watch": "watches",
+    "stopwatch": "watches",
 
     "headphone": "headphones",
     "headphones": "headphones",
+    "headset": "headphones",
 
     "phone": "phones",
     "smartphone": "phones",
+    "mobile": "phones",
 
     "laptop": "laptops",
     "notebook": "laptops",
+    "computer": "laptops",
 
     "sunglasses": "sunglasses",
+    "sunglass": "sunglasses",
     "glasses": "sunglasses",
+    "eyeglasses": "sunglasses",
 
     "bottle": "bottles",
-    "water_bottle": "bottles",
+    "water bottle": "bottles",
 
     "hat": "hats",
     "cap": "hats",
@@ -76,14 +106,39 @@ CATEGORY_MAP = {
     "earphones": "earphones",
     "earbud": "earphones",
     "earbuds": "earphones",
+    "airpod": "earphones",
 }
 
 
+def normalize_category(category):
+    """
+    Convert different category names into
+    our application's standard category names.
+    """
+
+    if not category:
+        return ""
+
+    category = category.lower().strip()
+
+    return CATEGORY_MAP.get(
+        category,
+        category
+    )
+
+
+# --------------------------------------------------
+# CATEGORY FROM DATASET FILENAME
+# --------------------------------------------------
+
 def get_category(filename):
+
     name = os.path.splitext(filename)[0].lower()
 
     for key, category in CATEGORY_MAP.items():
+
         if name.startswith(key):
+
             return category
 
     return None
@@ -97,12 +152,23 @@ def extract_features(image_path):
 
     img = Image.open(image_path).convert("RGB")
 
-    # Local machine: use MobileNetV2
+
+    # --------------------------------------------------
+    # LOCAL MACHINE
+    # MobileNetV2
+    # --------------------------------------------------
+
     if USE_TENSORFLOW:
+
         img = img.resize((224, 224))
 
         arr = keras_image.img_to_array(img)
-        arr = np.expand_dims(arr, axis=0)
+
+        arr = np.expand_dims(
+            arr,
+            axis=0
+        )
+
         arr = preprocess_input(arr)
 
         features = feature_model.predict(
@@ -113,40 +179,141 @@ def extract_features(image_path):
         norm = np.linalg.norm(features)
 
         if norm == 0:
+
             return features
 
         return features / norm
 
-    # Render/free server: lightweight visual features
-    img = img.resize((32, 32))
 
-    arr = np.asarray(img, dtype=np.float32) / 255.0
+    # --------------------------------------------------
+    # RENDER FREE TIER
+    # Lightweight visual features
+    # --------------------------------------------------
 
-    # Flatten RGB pixels
-    features = arr.flatten()
+    img = img.resize((64, 64))
 
-    # Add average color information
-    mean_color = arr.mean(axis=(0, 1))
+    arr = np.asarray(
+        img,
+        dtype=np.float32
+    ) / 255.0
 
-    # Add standard deviation information
-    std_color = arr.std(axis=(0, 1))
+
+    # Average RGB color
+
+    mean_color = arr.mean(
+        axis=(0, 1)
+    )
+
+
+    # Color variation
+
+    std_color = arr.std(
+        axis=(0, 1)
+    )
+
+
+    # Grayscale
+
+    gray = (
+        0.299 * arr[:, :, 0]
+        + 0.587 * arr[:, :, 1]
+        + 0.114 * arr[:, :, 2]
+    )
+
+
+    # Horizontal edges
+
+    horizontal_edges = np.abs(
+        np.diff(
+            gray,
+            axis=1
+        )
+    ).mean(axis=0)
+
+
+    # Vertical edges
+
+    vertical_edges = np.abs(
+        np.diff(
+            gray,
+            axis=0
+        )
+    ).mean(axis=1)
+
+
+    # Resize edge vectors
+
+    horizontal_edges = np.interp(
+        np.linspace(
+            0,
+            len(horizontal_edges) - 1,
+            32
+        ),
+        np.arange(
+            len(horizontal_edges)
+        ),
+        horizontal_edges
+    )
+
+
+    vertical_edges = np.interp(
+        np.linspace(
+            0,
+            len(vertical_edges) - 1,
+            32
+        ),
+        np.arange(
+            len(vertical_edges)
+        ),
+        vertical_edges
+    )
+
+
+    # Spatial brightness
+
+    spatial = gray.reshape(
+        8,
+        8,
+        8,
+        8
+    ).mean(
+        axis=(1, 3)
+    ).flatten()
+
+
+    # Final feature vector
 
     features = np.concatenate([
-        features,
         mean_color,
-        std_color
+        std_color,
+        horizontal_edges,
+        vertical_edges,
+        spatial
     ])
 
-    norm = np.linalg.norm(features)
+
+    # Normalize
+
+    norm = np.linalg.norm(
+        features
+    )
 
     if norm == 0:
+
         return features
 
     return features / norm
 
 
+# --------------------------------------------------
+# COSINE SIMILARITY
+# --------------------------------------------------
+
 def cosine_similarity(a, b):
-    return float(np.dot(a, b))
+
+    return float(
+        np.dot(a, b)
+    )
 
 
 # --------------------------------------------------
@@ -154,16 +321,16 @@ def cosine_similarity(a, b):
 # --------------------------------------------------
 
 DATASET_CACHE = []
-CATEGORY_PROTOTYPES = {}
 
 
 def load_dataset_cache():
 
     global DATASET_CACHE
-    global CATEGORY_PROTOTYPES
 
     if DATASET_CACHE:
+
         return
+
 
     allowed_extensions = {
         ".jpg",
@@ -172,31 +339,46 @@ def load_dataset_cache():
         ".webp"
     }
 
-    category_vectors = {}
 
     print("Loading dataset features...")
 
-    for filename in os.listdir(DATASET_FOLDER):
+
+    for filename in os.listdir(
+        DATASET_FOLDER
+    ):
 
         file_path = os.path.join(
             DATASET_FOLDER,
             filename
         )
 
-        if not os.path.isfile(file_path):
+
+        if not os.path.isfile(
+            file_path
+        ):
+
             continue
+
 
         extension = os.path.splitext(
             filename
         )[1].lower()
 
+
         if extension not in allowed_extensions:
+
             continue
 
-        category = get_category(filename)
+
+        category = get_category(
+            filename
+        )
+
 
         if not category:
+
             continue
+
 
         try:
 
@@ -204,48 +386,48 @@ def load_dataset_cache():
                 file_path
             )
 
-            item = {
-                "name": os.path.splitext(filename)[0],
-                "image": f"/dataset/{filename}",
-                "category": category,
-                "features": vector
-            }
 
-            DATASET_CACHE.append(item)
+            DATASET_CACHE.append({
 
-            if category not in category_vectors:
-                category_vectors[category] = []
+                "name":
+                    os.path.splitext(
+                        filename
+                    )[0],
 
-            category_vectors[category].append(
-                vector
-            )
+                "image":
+                    f"/dataset/{filename}",
+
+                "category":
+                    category,
+
+                "features":
+                    vector
+
+            })
+
 
         except Exception as error:
+
             print(
                 f"Skipping {filename}: {error}"
             )
 
-    # Create one prototype vector for each category
-    for category, vectors in category_vectors.items():
-
-        prototype = np.mean(
-            vectors,
-            axis=0
-        )
-
-        norm = np.linalg.norm(prototype)
-
-        if norm != 0:
-            prototype = prototype / norm
-
-        CATEGORY_PROTOTYPES[category] = prototype
 
     print(
         f"Dataset loaded: {len(DATASET_CACHE)} images"
     )
 
+
+    categories = sorted(
+        set(
+            item["category"]
+            for item in DATASET_CACHE
+        )
+    )
+
+
     print(
-        f"Categories loaded: {list(CATEGORY_PROTOTYPES.keys())}"
+        f"Categories loaded: {categories}"
     )
 
 
@@ -256,124 +438,253 @@ def load_dataset_cache():
 @app.route("/")
 def home():
 
-    return {
-        "message": "Product Image Search AI Backend is running"
-    }
+    return jsonify({
+
+        "message":
+            "Product Image Search AI Backend is running"
+
+    })
 
 
 # --------------------------------------------------
 # SEARCH
 # --------------------------------------------------
 
-@app.route("/search", methods=["POST"])
+@app.route(
+    "/search",
+    methods=["POST"]
+)
 def search_products():
+
+    # --------------------------------------------------
+    # CHECK IMAGE
+    # --------------------------------------------------
 
     if "image" not in request.files:
 
         return jsonify({
-            "error": "No image uploaded"
+
+            "error":
+                "No image uploaded"
+
         }), 400
 
-    uploaded_file = request.files["image"]
+
+    uploaded_file = request.files[
+        "image"
+    ]
+
 
     if uploaded_file.filename == "":
 
         return jsonify({
-            "error": "No image selected"
+
+            "error":
+                "No image selected"
+
         }), 400
+
+
+    # --------------------------------------------------
+    # SAVE UPLOADED IMAGE
+    # --------------------------------------------------
 
     upload_path = os.path.join(
         UPLOAD_FOLDER,
         uploaded_file.filename
     )
 
+
     uploaded_file.save(
         upload_path
     )
 
+
     try:
 
-        # Load dataset only once
+        # --------------------------------------------------
+        # LOAD DATASET
+        # --------------------------------------------------
+
         load_dataset_cache()
+
 
         if not DATASET_CACHE:
 
             return jsonify({
-                "error": "Dataset is empty"
+
+                "error":
+                    "Dataset is empty"
+
             }), 400
 
-        # Extract uploaded image features
+
+        # --------------------------------------------------
+        # GET CATEGORY FROM FRONTEND
+        # --------------------------------------------------
+
+        requested_category = request.form.get(
+            "category",
+            ""
+        )
+
+
+        requested_category = normalize_category(
+            requested_category
+        )
+
+
+        # --------------------------------------------------
+        # EXTRACT QUERY FEATURES
+        # --------------------------------------------------
+
         query_features = extract_features(
             upload_path
         )
 
-        # ------------------------------------------
-        # Detect closest category
-        # ------------------------------------------
 
-        category_scores = []
+        # --------------------------------------------------
+        # DETERMINE SEARCH CATEGORY
+        # --------------------------------------------------
 
-        for category, prototype in CATEGORY_PROTOTYPES.items():
+        selected_category = ""
 
-            score = cosine_similarity(
-                query_features,
-                prototype
+
+        # Use frontend MobileNet category
+        # when it matches our dataset
+
+        if requested_category:
+
+            matching_items = [
+
+                item
+                for item in DATASET_CACHE
+                if item["category"]
+                == requested_category
+
+            ]
+
+
+            if matching_items:
+
+                selected_category = (
+                    requested_category
+                )
+
+
+        # --------------------------------------------------
+        # FALLBACK CATEGORY DETECTION
+        # --------------------------------------------------
+
+        if not selected_category:
+
+            best_match = max(
+
+                DATASET_CACHE,
+
+                key=lambda item:
+                    cosine_similarity(
+
+                        query_features,
+                        item["features"]
+
+                    )
             )
 
-            category_scores.append({
-                "category": category,
-                "score": score
-            })
 
-        category_scores.sort(
-            key=lambda item: item["score"],
-            reverse=True
-        )
+            selected_category = (
+                best_match["category"]
+            )
 
-        selected_category = category_scores[0]["category"]
 
-        # ------------------------------------------
-        # Compare ONLY selected category
-        # ------------------------------------------
+        # --------------------------------------------------
+        # ONLY COMPARE PRODUCTS
+        # INSIDE SELECTED CATEGORY
+        # --------------------------------------------------
 
         results = []
 
+
         for item in DATASET_CACHE:
 
-            if item["category"] != selected_category:
+            if (
+                item["category"]
+                != selected_category
+            ):
+
                 continue
 
+
             similarity = cosine_similarity(
+
                 query_features,
                 item["features"]
+
             )
 
+
             results.append({
-                "name": item["name"],
-                "image": item["image"],
-                "category": item["category"],
-                "similarity": round(
-                    similarity * 100,
-                    2
-                )
+
+                "name":
+                    item["name"],
+
+                "image":
+                    item["image"],
+
+                "category":
+                    item["category"],
+
+                "similarity":
+                    round(
+                        similarity * 100,
+                        2
+                    )
+
             })
 
+
+        # --------------------------------------------------
+        # SORT RESULTS
+        # --------------------------------------------------
+
         results.sort(
-            key=lambda item: item["similarity"],
+
+            key=lambda item:
+                item["similarity"],
+
             reverse=True
+
         )
 
+
+        # --------------------------------------------------
+        # RESPONSE
+        # --------------------------------------------------
+
         return jsonify({
-            "category": selected_category,
-            "results": results[:5]
+
+            "category":
+                selected_category,
+
+            "results":
+                results[:5]
+
         })
+
 
     except Exception as error:
 
-        print("Search error:", error)
+        print(
+            "Search error:",
+            error
+        )
+
 
         return jsonify({
-            "error": str(error)
+
+            "error":
+                str(error)
+
         }), 500
 
 
@@ -381,12 +692,16 @@ def search_products():
 # DATASET IMAGES
 # --------------------------------------------------
 
-@app.route("/dataset/<path:filename>")
+@app.route(
+    "/dataset/<path:filename>"
+)
 def dataset_file(filename):
 
     return send_from_directory(
+
         DATASET_FOLDER,
         filename
+
     )
 
 
@@ -397,14 +712,19 @@ def dataset_file(filename):
 if __name__ == "__main__":
 
     port = int(
+
         os.environ.get(
             "PORT",
             5000
         )
+
     )
 
+
     app.run(
+
         host="0.0.0.0",
         port=port,
         debug=False
+
     )
