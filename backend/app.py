@@ -4,10 +4,13 @@ from PIL import Image
 import numpy as np
 import os
 
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.preprocessing import image as keras_image
-from tensorflow.keras.models import Model
+USE_TENSORFLOW = os.environ.get("USE_TENSORFLOW", "true").lower() == "true"
+
+if USE_TENSORFLOW:
+    from tensorflow.keras.applications import MobileNetV2
+    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+    from tensorflow.keras.preprocessing import image as keras_image
+    from tensorflow.keras.models import Model
 
 
 app = Flask(__name__)
@@ -24,17 +27,19 @@ os.makedirs(DATASET_FOLDER, exist_ok=True)
 # AI MODEL
 # --------------------------------------------------
 
-base_model = MobileNetV2(
-    weights="imagenet",
-    include_top=False,
-    pooling="avg"
-)
+feature_model = None
 
-feature_model = Model(
-    inputs=base_model.input,
-    outputs=base_model.output
-)
+if USE_TENSORFLOW:
+    base_model = MobileNetV2(
+        weights="imagenet",
+        include_top=False,
+        pooling="avg"
+    )
 
+    feature_model = Model(
+        inputs=base_model.input,
+        outputs=base_model.output
+    )
 
 # --------------------------------------------------
 # PRODUCT CATEGORIES
@@ -91,16 +96,46 @@ def get_category(filename):
 def extract_features(image_path):
 
     img = Image.open(image_path).convert("RGB")
-    img = img.resize((224, 224))
 
-    arr = keras_image.img_to_array(img)
-    arr = np.expand_dims(arr, axis=0)
-    arr = preprocess_input(arr)
+    # Local machine: use MobileNetV2
+    if USE_TENSORFLOW:
+        img = img.resize((224, 224))
 
-    features = feature_model.predict(
-        arr,
-        verbose=0
-    )[0]
+        arr = keras_image.img_to_array(img)
+        arr = np.expand_dims(arr, axis=0)
+        arr = preprocess_input(arr)
+
+        features = feature_model.predict(
+            arr,
+            verbose=0
+        )[0]
+
+        norm = np.linalg.norm(features)
+
+        if norm == 0:
+            return features
+
+        return features / norm
+
+    # Render/free server: lightweight visual features
+    img = img.resize((32, 32))
+
+    arr = np.asarray(img, dtype=np.float32) / 255.0
+
+    # Flatten RGB pixels
+    features = arr.flatten()
+
+    # Add average color information
+    mean_color = arr.mean(axis=(0, 1))
+
+    # Add standard deviation information
+    std_color = arr.std(axis=(0, 1))
+
+    features = np.concatenate([
+        features,
+        mean_color,
+        std_color
+    ])
 
     norm = np.linalg.norm(features)
 
